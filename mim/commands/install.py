@@ -13,8 +13,8 @@ from pip._internal.commands import create_command
 
 from mim.utils import (
     DEFAULT_CACHE_DIR,
+    DEFAULT_MMCV_FIND_HOST,
     PKG2PROJECT,
-    WHEEL_URL,
     echo_warning,
     get_torch_cuda_version,
 )
@@ -25,6 +25,12 @@ from mim.utils import (
     context_settings=dict(ignore_unknown_options=True),
 )
 @click.argument('args', nargs=-1, type=click.UNPROCESSED)
+@click.option(
+    '--mmcv-find-host',
+    'mmcv_find_host',
+    help='The hostname that used to construct the mmcv find link. '
+    'It will also be added to trusted hosts. '
+    f'Default is `{DEFAULT_MMCV_FIND_HOST}`.')
 @click.option(
     '-i',
     '--index-url',
@@ -43,6 +49,7 @@ from mim.utils import (
     'Deprecated, will have no effect.')
 def cli(
     args: Tuple[str],
+    mmcv_find_host: Optional[str] = None,
     index_url: Optional[str] = None,
     is_yes: bool = False,
 ) -> None:
@@ -61,6 +68,7 @@ def cli(
         > mim install -e <path>
         > mim install mmdet -i <url> -f <url>
         > mim install mmdet --extra-index-url <url> --trusted-host <hostname>
+        > mim install mmcv-full --mmcv-find-host <hostname>
 
     Here we list several commonly used options.
     For more options, please refer to `pip install --help`.
@@ -68,12 +76,17 @@ def cli(
     if is_yes:
         echo_warning(
             'The `--yes` option has been deprecated, will have no effect.')
-    exit_code = install(list(args), index_url=index_url, is_yes=is_yes)
+    exit_code = install(
+        list(args),
+        mmcv_find_host=mmcv_find_host,
+        index_url=index_url,
+        is_yes=is_yes)
     exit(exit_code)
 
 
 def install(
     install_args: List[str],
+    mmcv_find_host: Optional[str] = None,
     index_url: Optional[str] = None,
     is_yes: bool = False,
 ) -> Any:
@@ -82,6 +95,8 @@ def install(
 
     Args:
         install_args (list): List of arguments passed to `pip install`.
+        mmcv_find_host (str): The hostname that used to construct the mmcv find
+            link. If None, use the default mmcv find link hostname.
         index_url (str, optional): The pypi index url.
         is_yes (bool, optional): Deprecated, will have no effect. Reserved for
             interface compatibility only.
@@ -95,7 +110,13 @@ def install(
     importlib.reload(pip._vendor.pkg_resources)
 
     # add mmcv-full find links by default
-    install_args += ['-f', get_mmcv_full_find_link()]
+    if mmcv_find_host is None:
+        mmcv_find_host = DEFAULT_MMCV_FIND_HOST
+    else:
+        echo_warning(
+            f'Using the customized mmcv find hostname: {mmcv_find_host}')
+    install_args += ['--trusted-host', mmcv_find_host]
+    install_args += ['-f', get_mmcv_full_find_link(mmcv_find_host)]
 
     index_url_opt_names = ['-i', '--index-url', '--pypi-url']
     if any([opt_name in install_args for opt_name in index_url_opt_names]):
@@ -122,16 +143,26 @@ def install(
     return status_code
 
 
-def get_mmcv_full_find_link() -> str:
-    """Get the mmcv-full find link corresponding to the current environment."""
+def get_mmcv_full_find_link(mmcv_find_host: str) -> str:
+    """Get the mmcv-full find link corresponding to the current environment.
+
+    Args:
+        mmcv_find_host (str): The hostname that used to construct the mmcv find
+            link.
+
+    Returns:
+        str: The mmcv find links corresponding to the current torch version and
+        cuda version.
+    """
     torch_v, cuda_v = get_torch_cuda_version()
+
     major, minor, *_ = torch_v.split('.')
     torch_v = '.'.join([major, minor, '0'])
 
     if cuda_v.isdigit():
         cuda_v = f'cu{cuda_v}'
-    find_link = WHEEL_URL['mmcv-full'].format(
-        cuda_version=cuda_v, torch_version=f'torch{torch_v}')
+
+    find_link = f'https://{mmcv_find_host}/mmcv/dist/{cuda_v}/torch{torch_v}/index.html'  # noqa: E501
     return find_link
 
 
